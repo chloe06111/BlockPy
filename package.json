@@ -1,6 +1,6 @@
 {
   "name": "blockpy-harness-playground",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "State-of-the-art Blockly-Python AST Harness Playground showcasing robust roundtrips, compiler desugaring, custom interpreters, and AI library abstractions.",
   "main": "electron/main.cjs",
   "scripts": {
