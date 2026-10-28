@@ -1,5 +1,20 @@
 # BlockPy
 
+> **블록 ⇄ 파이썬 양방향 변환 교육용 플랫폼** — 국립부산과학관 「2026 AI+로보틱스 교육」 수업에서
+> 학생들이 블록 코딩과 파이썬을 오가며 로봇팔(Dobot)·티처블머신·AI 도우미를 쓰는 프로그램입니다.
+>
+> | | |
+> |---|---|
+> | 주요 기능 | 블록 ↔ 파이썬 무손실 양방향 변환 · 티처블머신(사진 수집·학습) · Dobot 로봇팔 연결과 카메라 보정 · AI 도우미 터미널 · Windows 설치본 |
+> | 원저작자 | [shain1912](https://github.com/shain1912) (Harness_Blockly) |
+> | 수업용 개선 | 이지호 (코드코리아) — 수업용 개선 8건, 온라인 설치본 (2026-08) |
+> | 인수인계 · 유지보수 | [chloe06111](https://github.com/chloe06111) (코드코리아, 2026-09~) |
+>
+> 수업용으로 바뀐 내용은 [`DOCS/인수인계_변경점_20260811.md`](DOCS/), 인수인계 내용은 [`HANDOVER.md`](HANDOVER.md)에 있습니다.
+> 아래는 원래 영어 설명입니다.
+
+---
+
 A **1:1 bidirectional, lossless bridge between Blockly visual blocks and Python text**, wrapped in a
 classroom-ready environment: a built-in Teachable-Machine panel, a Dobot robot-arm panel with
 camera↔robot calibration, and an AI assistant terminal that can see what the student is doing.
