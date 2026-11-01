@@ -842,7 +842,8 @@ app.post('/api/pip-install', (req, res) => {
 // dobotkit action against DobotLink (ws://localhost:9090) and prints a JSON result. Stateless per
 // call (DobotLink holds the hardware). Requires DobotLink.exe running + dobotkit installed in
 // PYTHON_CMD; both failures surface as {ok:false,error,hint} (HTTP 200 so the UI can show them).
-const ROBOT_BRIDGE = path.join(__dirname, 'scripts', 'robot_bridge.py');
+// genBase(): in the packaged app the script is asarUnpack'd — external python can't read app.asar.
+const ROBOT_BRIDGE = path.join(genBase(), 'scripts', 'robot_bridge.py');
 function runRobotBridge(command, res, timeoutMs) {
   let child;
   try {

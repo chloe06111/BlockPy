@@ -78,7 +78,11 @@ if (!process.env.BLOCKPY_CONFIG_RO) {
 }
 console.log('[ai] key config:', process.env.BLOCKPY_CONFIG);
 
-const { start } = require('../server.js');
+// server.js 는 PYTHON_CMD 등을 module-load 때 읽는다. 그래서 첫 실행 준비(ensureRuntimeIfNeeded)가
+// 파이썬을 받아 PYTHON_CMD 를 정한 '뒤에' 불러온다 — 맨 위에서 불러오면 첫 실행에 시스템 파이썬으로 굳는다.
+function start(port) {
+  return require('../server.js').start(port);
+}
 
 let mainWindow = null;
 let serverInfo = null;
