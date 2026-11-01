@@ -29,9 +29,9 @@
     {
       "id": "opencode",
       "label": "AI 도우미",
-      "url": "https://registry.npmjs.org/opencode-windows-x64-baseline/-/opencode-windows-x64-baseline-1.18.20.tgz",
-      "integrity": "sha512-dTUWq8Z5prd7WjccG6lqSbyXn3PL5tsNlqpNzjW+uBnJDVXLaN3Zv10OMvFDVlr1cmHQoggRKwvmyYwA2eDrrQ==",
-      "bytes": 179400000,
+      "url": "https://registry.npmjs.org/opencode-windows-x64-baseline/-/opencode-windows-x64-baseline-1.19.3.tgz",
+      "integrity": "sha512-tmTCxrPbssM9bq8T84l+HJJfgkw/Z5UlTat4K1n+1Ho2kwwoDoIOV5svY5777jqfV05PEZ8585tgNdhcecrJ2w==",
+      "version": "1.19.3",
       "target": "opencode",
       "kind": "npm-tgz",
       "extract": "package/bin/opencode.exe",
@@ -46,6 +46,27 @@
       "kind": "file",
       "note": "runtime/tm.py 가 이 파일이 있으면 쓰고, 없으면 학습할 때 인터넷에서 받는다. 미리 받아 두면 교실이 오프라인이어도 학습이 된다. alpha=1.0 · 224 · no_top — tm.py 의 MobileNetV2 설정과 일치해야 한다.",
       "sha256": "f8aff69536bd77a692c594f559c798c19bf7f3f36668fc9fa00b21c6aab4797c"
+    },
+    {
+      "id": "node",
+      "label": "Node.js (npx skills add 등)",
+      "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-win-x64.zip",
+      "sha256": "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97",
+      "bytes": 35683585,
+      "target": "runtime/node",
+      "kind": "zip",
+      "inner": "node-v22.23.2-win-x64",
+      "note": "휴대용 zip — 관리자 권한 없이 runtime/node 에 푼다. AI 도우미 터미널 PATH 에 올라간다. skills CLI 는 22.20 이상이 필요하다."
+    },
+    {
+      "id": "git",
+      "label": "Git (MinGit)",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.2/MinGit-2.53.0.2-64-bit.zip",
+      "sha256": "d4bf83d6a860ccae9af44e508e1e00a39f09db6fa78a9ba5543b94d87ca22a29",
+      "bytes": 41299390,
+      "target": "runtime/git",
+      "kind": "zip",
+      "note": "Git for Windows 의 휴대용 최소판. runtime/git/cmd 가 AI 도우미 터미널 PATH 에 올라간다(opencode · npx skills add 가 git 을 쓴다)."
     },
     {
       "id": "dobotlink",
@@ -68,7 +89,10 @@
       "opencv-python==4.13.0.92",
       "dobotkit==0.2.0",
       "websockets==17.0.1",
-      "tensorflow==2.21.0"
+      "tensorflow==2.21.0",
+      "faster-whisper==1.2.1",
+      "sounddevice==0.5.6",
+      "pillow==13.0.0"
     ]
   }
 }

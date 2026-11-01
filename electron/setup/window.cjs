@@ -37,7 +37,7 @@ const PAGE = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>
   <div class="err" id="err"></div>
 </div>
 <script>
-  const LABEL = { python: '파이썬', opencode: 'AI 도우미', mobilenet: 'AI 학습 밑바탕', dobotlink: '로봇팔 연결 프로그램' };
+  const LABEL = { python: '파이썬', opencode: 'AI 도우미', mobilenet: 'AI 학습 밑바탕', dobotlink: '로봇팔 연결 프로그램', node: 'Node.js', git: 'Git' };
   window.__setup = (e) => {
     if (e.step) document.getElementById('step').textContent = (LABEL[e.step] || e.step) + ' 준비';
     if (e.msg) document.getElementById('msg').textContent = e.msg;

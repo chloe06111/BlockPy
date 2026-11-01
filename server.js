@@ -265,11 +265,18 @@ function seedAgentContext() {
       fs.writeFileSync(claudeDst,
         '# CLAUDE.md\n이 폴더의 AI 도우미 안내는 AGENTS.md 를 따른다.\n@AGENTS.md\n', 'utf8');
     }
-    // 2-b) opencode.jsonc — AI 도우미가 쓸 모델을 못 박는다. 사내 정책상 DeepSeek V4 Flash/Pro
+    // 2-b) opencode.jsonc — AI 도우미가 쓸 모델을 못 박는다. 사내 정책상 DeepSeek Flash/Pro
     //      두 종만 허용되므로 기본값을 flash 로 둔다. 사용자가 이미 만든 파일은 덮지 않는다.
+    //      단, 예전 설치본이 깔아 둔 기본 파일(지난 모델 deepseek-v4-flash 그대로)은 새 기본으로 바꾼다.
     const ocSrc = path.join(__dirname, 'agent-context', 'opencode.jsonc');
     const ocDst = path.join(WORKSPACE_DIR, 'opencode.jsonc');
-    if (fs.existsSync(ocSrc) && !fs.existsSync(ocDst)) {
+    const oldDefault = (f) => {
+      try {
+        const t = fs.readFileSync(f, 'utf8');
+        return t.includes('BlockPy 수업용 AI 도우미 설정') && t.includes('"model": "deepseek/deepseek-v4-flash"');
+      } catch (_) { return false; }
+    };
+    if (fs.existsSync(ocSrc) && (!fs.existsSync(ocDst) || oldDefault(ocDst))) {
       fs.copyFileSync(ocSrc, ocDst);
     }
     // 3) 커리큘럼 예제 복사 (dev: public/examples, 패키징: dist/examples = STATIC_DIR/examples)

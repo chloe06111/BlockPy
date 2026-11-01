@@ -38,7 +38,7 @@ if (fs.existsSync(BUNDLED_PY)) {
 
 // 배포본에 실린 AI 키를 환경변수로 넘긴다. opencode 는 models.dev 규약대로 DEEPSEEK_API_KEY 를
 // 읽으므로, 사용자 홈의 auth.json 을 만들거나 고치지 않아도 바로 답한다(실측: auth.json 없는
-// 격리 환경에서 DEEPSEEK_API_KEY 만으로 deepseek/deepseek-v4-flash 응답 확인).
+// 격리 환경에서 DEEPSEEK_API_KEY 만으로 deepseek/deepseek-v4-flash 응답 확인 — 1.1.1 부터 기본 모델은 deepseek-flash).
 // 키 파일(electron/bundled-keys.cjs)은 깃에 없다 — 빌드 때만 asar 에 들어간다.
 // 이미 환경변수나 `opencode auth login` 으로 넣은 것이 있으면 그것을 우선한다(덮지 않는다).
 try {
@@ -128,18 +128,28 @@ async function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// 온라인 설치본의 첫 실행 준비. 파이썬이 이미 있으면(오프라인 완본이거나 이미 받아 뒀으면)
-// 아무 것도 하지 않고 바로 지나간다 — 준비 창도 뜨지 않는다.
-// 실패해도 앱은 뜬다: 시스템 파이썬으로 물러나거나, 사용자가 나중에 다시 시도할 수 있어야 한다.
+// 온라인 설치본의 첫 실행 준비. 다 갖춰져 있으면(파이썬·꾸러미·AI 도우미·Node.js·Git) 바로 지나간다.
+// 1.1.0 은 python.exe 만 보고 건너뛰어서, 꾸러미 설치가 한 번 실패한 PC 는 영영 준비가 안 됐다.
+// 이제 빠진 것이 하나라도 있으면 매번 이어서 준비한다(받아 둔 것은 다시 받지 않는다).
+// 실패해도 앱은 뜬다: 다음에 켤 때 이어서 한다.
 const NL = String.fromCharCode(10);   // 소스에 백슬래시 이스케이프를 두지 않으려고 상수로 쓴다
 async function ensureRuntimeIfNeeded() {
-  if (fs.existsSync(BUNDLED_PY)) return;                       // 이미 갖춰짐
+  const setup = require('./setup/install.cjs');
+  const root = app.getPath('userData');
+  const offlineBundle = fs.existsSync(PY_CANDIDATES[0]);       // 오프라인 완본(resources/python) · 개발용 python-embed
+  if (!offlineBundle && !setup.isReady(root)) await runSetup(setup, root);
+  // AI 도우미 터미널에서 python · pip · node · npx · git 이 BlockPy 것으로 잡히게 PATH 앞에 붙인다.
+  const dirs = setup.pathDirs(root);
+  if (dirs.length) process.env.PATH = dirs.concat([process.env.PATH || '']).join(path.delimiter);
+}
+
+async function runSetup(setup, root) {
   let ui = null;
   try {
-    const { ensureRuntime } = require('./setup/install.cjs');
+    const { ensureRuntime } = setup;
     const { openSetupWindow } = require('./setup/window.cjs');
     ui = openSetupWindow(fs.existsSync(ICON_PNG) ? ICON_PNG : null);
-    const res = await ensureRuntime(app.getPath('userData'), (e) => {
+    const res = await ensureRuntime(root, (e) => {
       console.log(`[setup] ${e.step}: ${e.msg}`);
       ui.update(e);
     });
@@ -154,7 +164,7 @@ async function ensureRuntimeIfNeeded() {
     if (res.weights && fs.existsSync(res.weights)) process.env.BLOCKPY_TM_WEIGHTS = res.weights;
   } catch (e) {
     console.error('[setup] 준비 실패:', e && e.message);
-    if (ui) { ui.update({ err: '준비에 실패했습니다: ' + (e && e.message) + NL + '앱은 그대로 열립니다. 인터넷을 확인한 뒤 다시 켜 주세요.' }); await new Promise((r) => setTimeout(r, 5000)); }
+    if (ui) { ui.update({ err: '준비에 실패했습니다: ' + (e && e.message) + NL + '앱은 그대로 열립니다. 인터넷을 확인한 뒤 BlockPy 를 다시 켜면 이어서 준비합니다.' }); await new Promise((r) => setTimeout(r, 15000)); }
   } finally {
     if (ui) ui.close();
   }

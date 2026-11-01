@@ -1,13 +1,14 @@
 {
   // BlockPy 수업용 AI 도우미 설정 (설치본 기본값).
   //
-  // 모델을 못 박아 둔다: 사내 정책상 DeepSeek **V4 Flash / V4 Pro** 두 종만 쓴다.
-  //   허용   deepseek/deepseek-v4-flash   (기본 — 빠르고 저렴)
+  // 모델을 못 박아 둔다: 사내 정책상 DeepSeek **Flash / Pro** 두 종만 쓴다.
+  //   허용   deepseek/deepseek-flash      (기본 — 빠르고 저렴. V4.1 Flash, 2026-10-17)
   //          deepseek/deepseek-v4-pro     (어려운 질문용)
   //   금지   deepseek-chat · deepseek-reasoner · *-free
+  //   지난   deepseek/deepseek-v4-flash   (2026-10 models.dev 에서 deprecated → deepseek-flash 로 바꿈)
   //
   // 키는 이 파일에 넣지 않는다. 설치본은 앱이 환경변수(DEEPSEEK_API_KEY)로 넘겨 준다.
   // 다른 키로 바꾸려면 터미널에서 `opencode auth login` 을 쓴다.
   "$schema": "https://opencode.ai/config.json",
-  "model": "deepseek/deepseek-v4-flash"
+  "model": "deepseek/deepseek-flash"
 }

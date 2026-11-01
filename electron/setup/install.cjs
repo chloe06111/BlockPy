@@ -86,6 +86,65 @@ function pyOk(pyExe) {
   return r.status === 0;
 }
 
+function hasPip(pyExe) {
+  if (!fs.existsSync(pyExe)) return false;
+  return spawnSync(pyExe, ['-m', 'pip', '--version'], { timeout: 60000 }).status === 0;
+}
+
+// 긴 명령(pip)을 돌리고, 실패하면 출력 끝부분을 오류에 담는다. execFileSync 의 maxBuffer(1MB)를
+// 넘기면 pip 가 도중에 죽으므로 spawnSync 에 넉넉한 버퍼를 준다.
+function run(exe, args, timeoutMs) {
+  const r = spawnSync(exe, args, { timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024, windowsHide: true });
+  if (r.status !== 0) {
+    const tail = String((r.stderr || '') + (r.stdout || '')).trim().split(/\r?\n/).slice(-6).join(' / ');
+    throw new Error((r.error ? r.error.message + ' ' : '') + tail);
+  }
+}
+
+// 다 갖춰졌는지 빠르게(파일만) 본다 — 매 실행마다 부르므로 파이썬을 띄우지 않는다.
+// 꾸러미 목록이 바뀌면(매니페스트 수정) 표식 이름이 달라져 다시 확인·설치한다.
+function pipMarker(rt) {
+  const key = require('crypto').createHash('sha1').update(MANIFEST.pip.packages.join('|')).digest('hex').slice(0, 10);
+  return path.join(rt, '.pip-ok-' + key);
+}
+
+function toolPaths(root) {
+  const rt = path.join(root, 'runtime');
+  return {
+    rt,
+    pyDir: path.join(rt, 'python'),
+    pyExe: path.join(rt, 'python', 'python.exe'),
+    ocExe: path.join(rt, 'opencode', 'opencode.exe'),
+    // 받은 opencode 의 버전 표식. 매니페스트 버전이 올라가면 표식이 없어 새 것으로 바꾼다.
+    ocMark: path.join(rt, 'opencode', '.version-' + ((MANIFEST.downloads.find((d) => d.id === 'opencode') || {}).version || '0')),
+    nodeDir: path.join(rt, 'node'),
+    nodeExe: path.join(rt, 'node', 'node.exe'),
+    gitCmd: path.join(rt, 'git', 'cmd'),
+    gitExe: path.join(rt, 'git', 'cmd', 'git.exe'),
+  };
+}
+
+function isReady(root) {
+  const p = toolPaths(root);
+  return [p.pyExe, p.ocExe, p.ocMark, p.nodeExe, p.gitExe, pipMarker(p.rt)].every((f) => fs.existsSync(f));
+}
+
+// AI 도우미 터미널·학생 실행에서 python/pip/node/npx/git 이 바로 잡히도록 PATH 앞에 붙일 폴더들.
+function pathDirs(root) {
+  const p = toolPaths(root);
+  return [p.pyDir, path.join(p.pyDir, 'Scripts'), p.nodeDir, p.gitCmd].filter((d) => fs.existsSync(d));
+}
+
+// zip 을 풀어 dest 에 둔다. inner 가 있으면 zip 안의 그 폴더 내용을 dest 로 올린다(node zip 은 폴더 하나로 감싸져 있다).
+function unzipTo(zipPath, dest, inner) {
+  const tmp = dest + '.tmp';
+  fs.rmSync(tmp, { recursive: true, force: true });
+  unzip(zipPath, tmp);
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.renameSync(inner ? path.join(tmp, inner) : tmp, dest);
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 /**
  * 준비 절차 전체. onEvent({step, msg, percent?}) 로 진행 상황을 알린다.
  * root: userData 경로. 결과물은 root/runtime/{python,opencode} 와 root/runtime/mobilenet_v2_weights.h5
@@ -93,10 +152,7 @@ function pyOk(pyExe) {
 async function ensureRuntime(root, onEvent) {
   const say = (step, msg, extra) => { if (onEvent) onEvent(Object.assign({ step, msg }, extra || {})); };
   const cache = path.join(root, 'downloads');
-  const rt = path.join(root, 'runtime');
-  const pyDir = path.join(rt, 'python');
-  const pyExe = path.join(pyDir, 'python.exe');
-  const ocExe = path.join(rt, 'opencode', 'opencode.exe');
+  const { rt, pyDir, pyExe, ocExe, ocMark, nodeDir, nodeExe, gitExe } = toolPaths(root);
   const weights = path.join(rt, 'mobilenet_v2_weights.h5');
   // 매니페스트에 없는 항목을 찾으면 알아볼 수 없는 오류(undefined.label)가 난다 — 여기서 분명히 말한다.
   const item = (id) => MANIFEST.downloads.find((d) => d.id === id);
@@ -107,44 +163,71 @@ async function ensureRuntime(root, onEvent) {
   };
   const result = { pythonExe: null, opencodeExe: null, weights: null, warnings: [] };
 
-  // ── 1) 파이썬 + 꾸러미 ─────────────────────────────────────────────────
-  if (pyOk(pyExe)) {
+  // ── 1) 파이썬 본체 + pip ───────────────────────────────────────────────
+  // 1.1.0 은 꾸러미 설치가 한 번 실패하면 python.exe 만 남고, 다음 실행부터 준비를 통째로 건너뛰었다.
+  // 이제 본체와 꾸러미를 따로 보고, 빠진 것만 다시 한다(본체를 지우지 않는다).
+  if (hasPip(pyExe)) {
     say('python', '파이썬은 이미 준비돼 있습니다');
   } else {
-    const zip = path.join(cache, 'python-embed.zip');
-    say('python', '파이썬을 준비합니다');
-    await download(need('python'), zip, (e) => say('python', e.msg, e));
-    fs.rmSync(pyDir, { recursive: true, force: true });
-    unzip(zip, pyDir);
-    preparePythonPath(pyDir);
-
+    if (!fs.existsSync(pyExe)) {
+      const zip = path.join(cache, 'python-embed.zip');
+      say('python', '파이썬을 준비합니다');
+      await download(need('python'), zip, (e) => say('python', e.msg, e));
+      fs.rmSync(pyDir, { recursive: true, force: true });
+      unzip(zip, pyDir);
+      preparePythonPath(pyDir);
+    }
     const getPip = path.join(cache, 'get-pip.py');
     await download(need('get-pip'), getPip, (e) => say('python', e.msg, e));
     say('python', 'pip 를 설치합니다');
-    execFileSync(pyExe, [getPip, '--no-warn-script-location'], { stdio: 'pipe', timeout: 600000 });
+    run(pyExe, [getPip, '--no-warn-script-location'], 600000);
+  }
 
+  // ── 2) 파이썬 꾸러미 ───────────────────────────────────────────────────
+  if (fs.existsSync(pipMarker(rt)) || pyOk(pyExe)) {
+    say('python', '파이썬 꾸러미는 이미 준비돼 있습니다');
+  } else {
     // tensorflow 가 가장 크다(휠 335MB). 한 번에 설치해 의존성 충돌을 pip 가 풀게 한다.
-    say('python', 'AI 학습 준비물을 내려받습니다. 몇 분 걸립니다', { heavy: true });
-    execFileSync(pyExe, ['-m', 'pip', 'install', '--no-warn-script-location'].concat(MANIFEST.pip.packages),
-      { stdio: 'pipe', timeout: 3600000 });
+    say('python', '파이썬 꾸러미를 내려받습니다(AI 학습 · 로봇 · 음성 인식). 10분쯤 걸립니다', { heavy: true });
+    run(pyExe, ['-m', 'pip', 'install', '--no-warn-script-location', '--disable-pip-version-check',
+      '--progress-bar', 'off'].concat(MANIFEST.pip.packages), 3600000);
     if (!pyOk(pyExe)) throw new Error('파이썬 꾸러미 설치를 마쳤지만 import 가 되지 않습니다');
     say('python', '파이썬 준비 완료');
   }
+  fs.writeFileSync(pipMarker(rt), MANIFEST.pip.packages.join('\n'));
   result.pythonExe = pyExe;
 
-  // ── 2) AI 도우미(opencode) ────────────────────────────────────────────
-  if (fs.existsSync(ocExe)) {
+  // ── 3) AI 도우미(opencode) ────────────────────────────────────────────
+  if (fs.existsSync(ocExe) && fs.existsSync(ocMark)) {
     say('opencode', 'AI 도우미는 이미 준비돼 있습니다');
   } else {
-    const tgz = path.join(cache, 'opencode.tgz');
-    say('opencode', 'AI 도우미를 준비합니다');
+    // 없거나 예전 버전이면 새 버전으로 바꾼다(1.1.0 이하 설치본은 1.18.20 이었다).
+    const tgz = path.join(cache, 'opencode-' + (need('opencode').version || 'x') + '.tgz');
+    say('opencode', fs.existsSync(ocExe) ? 'AI 도우미를 새 버전으로 바꿉니다' : 'AI 도우미를 준비합니다');
     await download(need('opencode'), tgz, (e) => say('opencode', e.msg, e));
     extractFromTgz(tgz, need('opencode').extract, ocExe);
+    for (const f of fs.readdirSync(path.dirname(ocExe))) {
+      if (f.startsWith('.version-')) fs.unlinkSync(path.join(path.dirname(ocExe), f));
+    }
+    fs.writeFileSync(ocMark, need('opencode').version || '');
+    try { fs.unlinkSync(tgz); } catch (_) { /* noop */ }
     say('opencode', 'AI 도우미 준비 완료');
   }
   result.opencodeExe = ocExe;
 
-  // ── 3) MobileNet 가중치 (없어도 학습은 되지만 그때 인터넷이 필요하다) ──
+  // ── 4) Node.js · Git (휴대용, 관리자 권한 없음) ───────────────────────
+  for (const [id, exe, dest] of [['node', nodeExe, nodeDir], ['git', gitExe, path.join(rt, 'git')]]) {
+    if (fs.existsSync(exe)) { say(id, need(id).label + ' 는 이미 준비돼 있습니다'); continue; }
+    const zip = path.join(cache, id + '.zip');
+    say(id, need(id).label + ' 를 준비합니다');
+    await download(need(id), zip, (e) => say(id, e.msg, e));
+    unzipTo(zip, dest, need(id).inner);
+    if (!fs.existsSync(exe)) throw new Error(need(id).label + ' 를 풀었지만 ' + path.basename(exe) + ' 가 없습니다');
+    try { fs.unlinkSync(zip); } catch (_) { /* noop */ }
+    say(id, need(id).label + ' 준비 완료');
+  }
+
+  // ── 5) MobileNet 가중치 (없어도 학습은 되지만 그때 인터넷이 필요하다) ──
   try {
     if (!item('mobilenet')) throw new Error('manifest.json 에 mobilenet 항목이 없습니다');
     await download(item('mobilenet'), weights, (e) => say('mobilenet', e.msg, e));
@@ -153,12 +236,17 @@ async function ensureRuntime(root, onEvent) {
     result.warnings.push('AI 학습 밑바탕을 받지 못했습니다 — 첫 학습 때 인터넷이 필요합니다: ' + e.message);
   }
 
-  // ── 4) DobotLink (선택) — 로봇팔을 쓸 때만 필요하므로 실패해도 멈추지 않는다 ──
+  // ── 6) DobotLink (선택) — 로봇팔을 쓸 때만 필요하므로 실패해도 멈추지 않는다 ──
+  // 설치 창은 한 번만 연다(사용자가 닫았으면 다시 준비할 때마다 400MB 창을 띄우지 않는다).
   const dl = item('dobotlink');   // 선택 — 없거나 실패해도 준비 절차를 멈추지 않는다
   const installed = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'DobotLink', 'DobotLink.exe');
+  const tried = path.join(rt, '.dobotlink-tried');
   if (fs.existsSync(installed)) {
     say('dobotlink', 'DobotLink 는 이미 설치돼 있습니다');
+  } else if (fs.existsSync(tried)) {
+    result.warnings.push('DobotLink 가 없습니다 — 로봇팔을 쓰려면 BlockPy 릴리스 페이지의 DobotLink 설치 파일로 설치하세요');
   } else {
+    fs.writeFileSync(tried, new Date().toISOString());
     try {
       if (!dl) throw new Error('manifest.json 에 dobotlink 항목이 없습니다');
       const exe = path.join(cache, 'DobotLink-Setup.exe');
@@ -175,4 +263,4 @@ async function ensureRuntime(root, onEvent) {
   return result;
 }
 
-module.exports = { ensureRuntime };
+module.exports = { ensureRuntime, isReady, pathDirs };
