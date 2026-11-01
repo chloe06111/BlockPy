@@ -11,25 +11,51 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execFileSync, spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 const { download, human } = require('./download.cjs');
 
 const MANIFEST = require('./manifest.json');
 
-// PowerShell 로 zip 을 푼다(윈도우 기본 제공, 별도 의존성 없음).
-function unzip(zipPath, destDir) {
+// 오래 걸리는 명령은 **반드시 비동기로** 돌린다. 1.1.2 는 execFileSync/spawnSync 로 돌려서
+// pip(10분)·압축 풀기 동안 Electron 메인 스레드가 막혀 준비 창이 '응답 없음'이 됐다(실측: "받기 완료하고 뻗음").
+// 실패하면 출력 끝부분을 오류에 담는다.
+function runAsync(exe, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let out = '';
+    const keep = (d) => { out = (out + d.toString()).slice(-8000); };
+    let child;
+    try { child = spawn(exe, args, { windowsHide: true }); } catch (e) { return reject(e); }
+    const timer = setTimeout(() => { try { child.kill(); } catch (_) { /* noop */ } reject(new Error('시간 초과: ' + path.basename(exe))); }, timeoutMs);
+    child.stdout.on('data', keep);
+    child.stderr.on('data', keep);
+    child.on('error', (e) => { clearTimeout(timer); reject(e); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve(out);
+      reject(new Error(path.basename(exe) + ' 종료 코드 ' + code + ': ' + out.trim().split(/\r?\n/).slice(-6).join(' / ')));
+    });
+  });
+}
+
+const okAsync = (exe, args, timeoutMs) => runAsync(exe, args, timeoutMs).then(() => true, () => false);
+
+// zip 을 푼다. 윈도우 10 이상 기본 tar(bsdtar)가 zip 도 풀고 Expand-Archive 보다 훨씬 빠르다
+// (Node.js zip 은 파일이 수천 개라 Expand-Archive 로는 느린 PC 에서 5분을 넘겼다). 없으면 PowerShell 로 물러난다.
+async function unzip(zipPath, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
-  execFileSync('powershell.exe', [
+  const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+  if (fs.existsSync(tar) && await okAsync(tar, ['-xf', zipPath, '-C', destDir], 1800000)) return;
+  await runAsync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-Command',
     `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`,
-  ], { stdio: 'pipe', timeout: 300000 });
+  ], 1800000);
 }
 
 // npm 패키지(.tgz)에서 파일 하나만 꺼낸다. tar 는 윈도우 10 이상에 기본으로 있다.
-function extractFromTgz(tgzPath, innerPath, destFile) {
+async function extractFromTgz(tgzPath, innerPath, destFile) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bpy-tgz-'));
   try {
-    execFileSync('tar', ['-xzf', tgzPath, '-C', tmp, innerPath], { stdio: 'pipe', timeout: 600000 });
+    await runAsync('tar', ['-xzf', tgzPath, '-C', tmp, innerPath], 600000);
     const src = path.join(tmp, innerPath);
     if (!fs.existsSync(src)) throw new Error(`꾸러미 안에 ${innerPath} 가 없습니다`);
     fs.mkdirSync(path.dirname(destFile), { recursive: true });
@@ -63,7 +89,7 @@ function preparePythonPath(pyDir) {
 }
 
 // pip 이름 ↔ import 이름이 다른 것만 적는다(나머지는 같다).
-const IMPORT_NAME = { 'opencv-python': 'cv2' };
+const IMPORT_NAME = { 'opencv-python': 'cv2', pillow: 'PIL' };
 
 // 무엇이 갖춰져야 "준비 완료" 인지는 **매니페스트에서 끌어온다**.
 // 하드코딩하면 매니페스트를 고쳐도 판정이 따라오지 않아, 안 깔린 것을 깔렸다고 하거나 그 반대가 된다.
@@ -74,31 +100,22 @@ function requiredImports() {
     .map((n) => IMPORT_NAME[n] || n.replace(/-/g, '_'));
 }
 
-function pyOk(pyExe) {
-  if (!fs.existsSync(pyExe)) return false;
+// 빠진 import 이름 목록(비어 있으면 다 있음). 실패 메시지에 무엇이 빠졌는지 그대로 보여 준다.
+async function missingImports(pyExe) {
+  if (!fs.existsSync(pyExe)) return ['python'];
   const mods = requiredImports();
-  if (!mods.length) return true;
+  if (!mods.length) return [];
   // import 는 tensorflow 가 끼면 수십 초가 걸린다. 설치 여부 판정에는 find_spec 이면 충분하다.
-  const probe = 'import importlib.util,sys;'
-    + 'missing=[m for m in ' + JSON.stringify(mods) + ' if importlib.util.find_spec(m) is None];'
-    + 'sys.exit(1 if missing else 0)';
-  const r = spawnSync(pyExe, ['-c', probe], { timeout: 120000 });
-  return r.status === 0;
+  const probe = 'import importlib.util;'
+    + 'print(",".join(m for m in ' + JSON.stringify(mods) + ' if importlib.util.find_spec(m) is None))';
+  try {
+    const out = (await runAsync(pyExe, ['-c', probe], 120000)).trim();
+    return out ? out.split(',') : [];
+  } catch (_) { return ['(검사 실패)']; }
 }
 
 function hasPip(pyExe) {
-  if (!fs.existsSync(pyExe)) return false;
-  return spawnSync(pyExe, ['-m', 'pip', '--version'], { timeout: 60000 }).status === 0;
-}
-
-// 긴 명령(pip)을 돌리고, 실패하면 출력 끝부분을 오류에 담는다. execFileSync 의 maxBuffer(1MB)를
-// 넘기면 pip 가 도중에 죽으므로 spawnSync 에 넉넉한 버퍼를 준다.
-function run(exe, args, timeoutMs) {
-  const r = spawnSync(exe, args, { timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024, windowsHide: true });
-  if (r.status !== 0) {
-    const tail = String((r.stderr || '') + (r.stdout || '')).trim().split(/\r?\n/).slice(-6).join(' / ');
-    throw new Error((r.error ? r.error.message + ' ' : '') + tail);
-  }
+  return fs.existsSync(pyExe) ? okAsync(pyExe, ['-m', 'pip', '--version'], 120000) : Promise.resolve(false);
 }
 
 // 다 갖춰졌는지 빠르게(파일만) 본다 — 매 실행마다 부르므로 파이썬을 띄우지 않는다.
@@ -136,10 +153,10 @@ function pathDirs(root) {
 }
 
 // zip 을 풀어 dest 에 둔다. inner 가 있으면 zip 안의 그 폴더 내용을 dest 로 올린다(node zip 은 폴더 하나로 감싸져 있다).
-function unzipTo(zipPath, dest, inner) {
+async function unzipTo(zipPath, dest, inner) {
   const tmp = dest + '.tmp';
   fs.rmSync(tmp, { recursive: true, force: true });
-  unzip(zipPath, tmp);
+  await unzip(zipPath, tmp);
   fs.rmSync(dest, { recursive: true, force: true });
   fs.renameSync(inner ? path.join(tmp, inner) : tmp, dest);
   fs.rmSync(tmp, { recursive: true, force: true });
